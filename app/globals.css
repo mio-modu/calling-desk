@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #16181d;
+  --color-ink-soft: #4a5160;
+  --color-ink-faint: #868e9f;
+  --color-line: #e3e6ec;
+  --color-surface: #ffffff;
+  --color-canvas: #f7f8fa;
+  --color-accent: #1f5fa8;
+  --color-accent-soft: #eaf1fa;
+  --color-blocker: #b3261e;
+  --color-blocker-soft: #fdecea;
+  --color-warn: #8a5a00;
+  --color-warn-soft: #fdf3e2;
+  --color-ok: #1f6b3f;
+  --color-ok-soft: #eaf5ee;
+  --font-sans: "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+    "Malgun Gothic", system-ui, sans-serif;
+}
+
+html { color-scheme: light; }
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  /* 한글 본문 가독성 */
+  word-break: keep-all;
+  line-height: 1.65;
+}
+
+/* 서류 본문 입력은 글자가 많으므로 조금 더 조밀하게 */
+textarea { font-variant-numeric: tabular-nums; }
+
+.prose-doc h1 { font-size: 1.35rem; font-weight: 700; margin: 1.2em 0 0.5em; }
+.prose-doc h2 { font-size: 1.12rem; font-weight: 700; margin: 1.4em 0 0.4em; padding-bottom: .2em; border-bottom: 1px solid var(--color-line); }
+.prose-doc h3 { font-size: 1rem; font-weight: 600; margin: 1.1em 0 0.3em; }
+.prose-doc p { margin: 0.7em 0; }
+.prose-doc ul, .prose-doc ol { margin: 0.7em 0; padding-left: 1.3em; }
+.prose-doc ul { list-style: disc; }
+.prose-doc ol { list-style: decimal; }
+.prose-doc li { margin: 0.25em 0; }
+.prose-doc strong { font-weight: 700; }
+.prose-doc table { border-collapse: collapse; margin: 0.8em 0; font-size: 0.92em; }
+.prose-doc th, .prose-doc td { border: 1px solid var(--color-line); padding: 0.35em 0.6em; }
+.prose-doc blockquote { border-left: 3px solid var(--color-line); padding-left: 0.8em; color: var(--color-ink-soft); }
