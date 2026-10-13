@@ -11,7 +11,8 @@
     "db:migrate": "node --env-file=.env.local scripts/migrate.mjs",
     "db:smoke": "node --env-file=.env.local --import tsx scripts/smoke.ts",
     "test": "node --import tsx --test tests/*.test.ts",
-    "verify:llm": "node --env-file-if-exists=.env.local --import tsx scripts/verify-llm.ts"
+    "verify:llm": "node --env-file-if-exists=.env.local --import tsx scripts/verify-llm.ts",
+    "db:demo": "node --env-file=.env.local --import tsx scripts/demo-seed.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",
