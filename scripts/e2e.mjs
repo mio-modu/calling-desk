@@ -45,8 +45,15 @@ try {
   await page.goto(`${BASE}/credentials`, { waitUntil: 'networkidle' })
   const card = page.locator('section', { has: page.locator('h2', { hasText: '목사안수증명서' }) }).first()
   await card.locator('select[name=status]').selectOption('received')
-  await card.locator('input[name=receivedAt]').fill('2026-10-01')
-  await card.locator('input[name=validUntil]').fill('2026-11-05')
+  // 날짜를 고정하면 테스트가 하루 지나 깨진다. 오늘 기준으로 계산한다.
+  const kstToday = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date())
+  const plusDays = (n) =>
+    new Date(new Date(`${kstToday}T00:00:00Z`).getTime() + n * 86400000).toISOString().slice(0, 10)
+  const EXPIRES_IN = 24
+  await card.locator('input[name=receivedAt]').fill(plusDays(-11))
+  await card.locator('input[name=validUntil]').fill(plusDays(EXPIRES_IN))
   await card.locator('input[name=note]').fill('노회 서기 통해 발급')
   await card.locator('button[type=submit]').first().click()
   await page.waitForLoadState('networkidle')
@@ -54,8 +61,8 @@ try {
   const reloaded = page.locator('section', { has: page.locator('h2', { hasText: '목사안수증명서' }) }).first()
   if (await reloaded.locator('text=보유중').count()) ok('상태 저장 → 보유중')
   else fail('증빙 상태가 저장되지 않음')
-  if (await reloaded.locator('text=D-24').count()) ok('유효기한 임박 D-24 배지')
-  else fail('임박 배지 없음')
+  if (await reloaded.locator(`text=D-${EXPIRES_IN}`).count()) ok(`유효기한 임박 D-${EXPIRES_IN} 배지`)
+  else fail(`임박 배지 없음 (D-${EXPIRES_IN} 기대)`)
 
   console.log('\n[3] 대시보드 반영')
   await page.goto(BASE, { waitUntil: 'networkidle' })
@@ -136,7 +143,36 @@ try {
   if (!(await page.locator('text=청년부 출석 증가').count())) ok('체크 해제한 후보는 저장되지 않음')
   else fail('승인하지 않은 후보가 저장됨')
 
-  console.log('\n[8] 로그아웃 상태 재확인')
+  console.log('\n[8] 규칙 기반 업로드 분해 (무료 경로)')
+  await page.goto(`${BASE}/evidence`, { waitUntil: 'networkidle' })
+  const sample = [
+    '# 사역 이력서', '',
+    '## 사역 경력',
+    '- 2013.3 ~ 2016.2  ◇◇교회 전임전도사. 주일학교를 담당했습니다.',
+    '- 2016.3 ~ 2018.12 ◆◆교회 부목사',
+    '  장년부 심방을 전담했습니다.', '',
+    '주일학교 출석이 12명에서 40명으로 늘었습니다.', '',
+  ].join('\n')
+  await page.setInputFiles('input[name=file]', {
+    name: 'e2e-이력서.md', mimeType: 'text/markdown', buffer: Buffer.from(sample, 'utf8'),
+  })
+  await page.selectOption('select[name=method]', 'rules')
+  await Promise.all([
+    page.waitForURL(/\/evidence\/uploads\//, { timeout: 20000 }),
+    page.click('button:has-text("올려서 분해")'),
+  ])
+  await page.waitForLoadState('networkidle')
+  const review = await page.locator('body').innerText()
+  if (/전임전도사/.test(review) && /2013/.test(review)) ok('규칙 분해가 경력과 기간을 뽑았다')
+  else fail('규칙 분해 결과가 보이지 않음')
+  if (/12명에서 40명/.test(review)) ok('수치 조각을 따로 세웠다')
+  else fail('수치 조각이 없음')
+  if (/원문 인용/.test(review)) ok('원문 인용 보존')
+  // 키 없이도 됐는지 — 분해 실패 안내가 뜨지 않아야 한다
+  if (!/ANTHROPIC_API_KEY/.test(review)) ok('키 없이 분해 완료 (비용 0)')
+  else fail('키를 요구하고 있음')
+
+  console.log('\n[9] 로그아웃 상태 재확인')
   await page.context().clearCookies()
   await page.goto(`${BASE}/credentials`, { waitUntil: 'networkidle' })
   if (page.url().includes('/login')) ok('쿠키 제거 후 다시 차단')

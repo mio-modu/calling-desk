@@ -6,7 +6,7 @@ import { listUploads, listCandidates } from '@/lib/repo/uploads'
 import { SUPPORTED_EXTENSIONS } from '@/lib/extract'
 import { llmAvailable } from '@/lib/env'
 import {
-  Badge, Button, Card, Empty, Input, Label, Notice, Select,
+  Badge, Button, Card, Empty, Input, Label, Select,
 } from '@/components/ui'
 import { EvidenceForm } from '@/components/EvidenceForm'
 import { addEvidence, removeEvidence, uploadDocument } from './actions'
@@ -119,20 +119,32 @@ export default async function EvidencePage({
             title="과거 서류 업로드"
             subtitle={`${SUPPORTED_EXTENSIONS.join(' / ')} — 조각 후보로 분해하고, 승인한 것만 저장합니다`}
           >
-            {!llmAvailable() ? (
-              <Notice tone="warn">
-                ANTHROPIC_API_KEY 가 없어 자동 분해가 비활성화돼 있습니다.
-                파일은 보관되고, 키를 넣은 뒤 다시 올리면 분해됩니다.
-              </Notice>
-            ) : (
-              <form action={uploadDocument} className="flex flex-wrap items-end gap-2">
+            <form action={uploadDocument} className="space-y-3">
+              <div className="flex flex-wrap items-end gap-2">
                 <div className="min-w-48 flex-1">
                   <Label>파일</Label>
                   <Input type="file" name="file" required accept={SUPPORTED_EXTENSIONS.join(',')} />
                 </div>
+                <div className="w-56">
+                  <Label>분해 방식</Label>
+                  <Select name="method" defaultValue="rules">
+                    <option value="rules">규칙 기반 (무료)</option>
+                    <option value="llm" disabled={!llmAvailable()}>
+                      Claude {llmAvailable() ? '(유료)' : '— 키 없음'}
+                    </option>
+                  </Select>
+                </div>
                 <Button type="submit" variant="secondary">올려서 분해</Button>
-              </form>
-            )}
+              </div>
+              <p className="text-[12.5px] text-ink-faint">
+                <strong className="text-ink-soft">규칙 기반</strong>은 날짜 범위·숫자·불릿을 찾아
+                원문에서 글자를 잘라 옵니다. 비용이 없고 사실을 지어낼 수 없지만, 문맥을 읽어
+                요약하거나 흩어진 내용을 묶지는 못합니다.
+                {llmAvailable()
+                  ? ' Claude 분해는 문맥을 읽습니다(문서 1장당 약 $0.05).'
+                  : ' Claude 분해는 ANTHROPIC_API_KEY 가 있을 때 선택할 수 있습니다.'}
+              </p>
+            </form>
 
             {pendingPerUpload.length > 0 && (
               <ul className="mt-4 divide-y divide-line border-t border-line pt-3">

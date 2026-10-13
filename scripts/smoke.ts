@@ -7,14 +7,15 @@
  *
  * 실행: npm run db:smoke
  *
- * LLM 호출(extractCandidates)만 대역으로 바꿔 실행한다. 그 지점을 뺀
- * 전 경로 — 추출 텍스트 적재, 후보 생성, **사람 승인 게이트**, 승격,
- * 마스터 버전 생성, 완성도 점수, 코칭 질문 — 는 실제 코드와 실제 DB 로 돈다.
+ * 대역(mock)이 없다. 규칙 기반 분해를 쓰므로 LLM 호출 없이 전 경로가 실제로 돈다 —
+ * 텍스트 추출, 조각 분해, **사람 승인 게이트**, 승격, 마스터 버전 생성,
+ * 완성도 점수, 코칭 질문까지 실제 코드와 실제 DB 로 확인한다. 비용은 0이다.
  */
 import assert from 'node:assert/strict'
 import { getPool, query } from '../lib/db'
 import { extractText } from '../lib/extract'
-import type { ExtractedCandidate } from '../lib/llm'
+import { extractCandidatesByRules } from '../lib/extract-rules'
+import { auditCandidates } from '../lib/llm-audit'
 import {
   acceptCandidates, createUpload, listCandidates, saveCandidates,
 } from '../lib/repo/uploads'
@@ -41,45 +42,6 @@ const PAST_RESUME = `
 ## 기타
 교회 재정 시스템 전산화를 주도해 결산 기간을 2주에서 3일로 줄였습니다.
 `.trim()
-
-/** 실제 LLM 이 돌려줄 모양의 응답. 날짜는 원문에 있는 만큼만 채워져 있다. */
-const FAKE_LLM_OUTPUT: ExtractedCandidate[] = [
-  {
-    type: 'career', title: '○○교회 교육전도사 (중고등부)',
-    body: '중고등부를 담당했습니다.',
-    period_from: '2005-03', period_to: '2011-12',
-    tags: ['중고등부', '교육'],
-    source_quote: '2005.3 ~ 2011.12  ○○교회 교육전도사. 중고등부를 담당했습니다.',
-  },
-  {
-    type: 'career', title: '△△교회 청년부 담당 부목사',
-    body: '청년부를 맡아 섬겼습니다.',
-    period_from: '2019-03', period_to: '2022-02',
-    tags: ['청년'],
-    source_quote: '2019.3 ~ 2022.2   △△교회 청년부 담당 부목사. 청년부를 맡아 섬겼습니다.',
-  },
-  {
-    type: 'career', title: '□□교회 부목사 (행정·교육)',
-    body: '행정과 교육을 함께 맡고 있습니다.',
-    period_from: '2022-03', period_to: '',   // 진행중 — 비어 있다
-    tags: ['행정', '교육'],
-    source_quote: '2022.3 ~ 현재      □□교회 부목사. 행정과 교육을 함께 맡고 있습니다.',
-  },
-  {
-    type: 'competency', title: '교회 재정 시스템 전산화 주도',
-    body: '결산 기간을 2주에서 3일로 줄였습니다.',
-    period_from: '', period_to: '',
-    tags: ['행정', '전산화'],
-    source_quote: '교회 재정 시스템 전산화를 주도해 결산 기간을 2주에서 3일로 줄였습니다.',
-  },
-  {
-    // 사용자가 승인하지 않을 후보. evidence 로 넘어가지 않아야 한다.
-    type: 'scrap', title: '맡아 섬겼습니다 (표현)',
-    body: '청년부를 맡아 섬겼습니다',
-    period_from: '', period_to: '', tags: [],
-    source_quote: '청년부를 맡아 섬겼습니다.',
-  },
-]
 
 const RESUME_V1 = `
 # 사역 이력서
@@ -133,8 +95,13 @@ async function main(): Promise<void> {
   })
   console.log(`업로드: ${upload.filename} (${upload.byteSize} bytes), 추출 ${extracted.ok ? extracted.text.length : 0}자`)
 
-  section('2. 조각 후보 생성 — evidence 에는 아직 아무것도 없어야 한다')
-  const n = await saveCandidates(upload.id, FAKE_LLM_OUTPUT)
+  section('2. 규칙 기반 분해 → 조각 후보 — evidence 에는 아직 아무것도 없어야 한다')
+  const extractedCands = extractCandidatesByRules(extracted.ok ? extracted.text : '')
+  // 규칙 분해는 원문에서 글자를 잘라 올 뿐이므로 환각 감사를 항상 통과해야 한다.
+  const audit = auditCandidates(PAST_RESUME, extractedCands)
+  assert.deepEqual(audit.fails, [], `환각 감사 실패:\n${audit.fails.join('\n')}`)
+  console.log('✓ 환각 감사 통과 — 인용·수치·연도가 전부 원문에 존재')
+  const n = await saveCandidates(upload.id, extractedCands)
   const candidates = await listCandidates(upload.id, 'pending')
   console.log(`후보 ${n}개 생성:`)
   for (const c of candidates) {
@@ -145,22 +112,26 @@ async function main(): Promise<void> {
     '승인 전에는 자산 은행이 비어 있어야 한다 (자동 저장 금지)')
   console.log('✓ 승인 전 자산 은행 비어 있음 — 자동 저장되지 않았다')
 
-  // 날짜 정규화 확인: "2005-03" → 2005-03-01, 빈 값 → null
+  // 날짜 정규화 확인: "2005.3" → 2005-03-01, '현재' → null
   const firstCareer = candidates.find((c) => c.title.includes('교육전도사'))!
   assert.equal(firstCareer.periodFrom, '2005-03-01')
   assert.equal(firstCareer.periodTo, '2011-12-31')
   const ongoing = candidates.find((c) => c.title.includes('□□교회'))!
-  assert.equal(ongoing.periodTo, null, '원문에 종료일이 없으면 null 이어야 한다')
+  assert.equal(ongoing.periodTo, null, "'현재'는 종료일 null 이어야 한다")
   console.log('✓ 부분 날짜 정규화 정상, 없는 값은 추측하지 않음')
 
-  section('3. 사람이 승인 — 체크한 4개만 승격 (scrap 후보는 버림)')
-  const approve = candidates.filter((c) => c.type !== 'scrap')
+  section('3. 사람이 승인 — 경력·수치·역량만 승격하고 학력 줄은 버린다')
+  const approve = candidates.filter((c) => !/대학교|대학원/.test(c.title))
   const promoted = await acceptCandidates(upload.id, approve.map((c) => ({
     id: c.id, type: c.type, title: c.title, body: c.body,
     periodFrom: c.periodFrom, periodTo: c.periodTo, tags: c.tags, strength: 3,
   })))
   console.log(`승격 ${promoted.length}개 / 후보 ${candidates.length}개`)
-  assert.equal(promoted.length, 4)
+  assert.ok(promoted.length > 0 && promoted.length < candidates.length,
+    '일부만 승격돼야 한다 (승인하지 않은 것은 저장되지 않는다)')
+  const leftover = await listCandidates(upload.id, 'pending')
+  assert.equal(leftover.length, candidates.length - promoted.length,
+    '승인하지 않은 후보는 pending 으로 남아 있어야 한다')
   assert.ok(promoted.every((e) => !e.verified),
     '승격된 조각은 전부 verified=false 여야 한다')
   assert.ok(promoted.every((e) => e.source === 'imported_doc' && e.sourceQuote),

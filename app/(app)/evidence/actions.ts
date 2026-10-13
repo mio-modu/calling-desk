@@ -5,6 +5,8 @@ import { redirect } from 'next/navigation'
 import { EVIDENCE_TYPES, type EvidenceType } from '@/lib/domain'
 import { clampForLlm, extractText, isSupported } from '@/lib/extract'
 import { extractCandidates, LlmUnavailableError } from '@/lib/llm'
+import { extractCandidatesByRules } from '@/lib/extract-rules'
+import { llmAvailable } from '@/lib/env'
 import { putFile } from '@/lib/storage'
 import {
   createEvidence, deleteEvidence, updateEvidence, type EvidenceInput,
@@ -118,15 +120,31 @@ export async function uploadDocument(formData: FormData): Promise<void> {
     redirect(`/evidence/uploads/${upload.id}`)
   }
 
-  const { text, truncated } = clampForLlm(extracted.text)
+  // 기본은 규칙 기반 분해다. 비용이 0이고, 원문에서 글자를 잘라 옮기기만 하므로
+  // 사실을 지어낼 수가 없다. LLM 분해는 키가 있을 때만 선택할 수 있다.
+  const useLlm = String(formData.get('method') ?? 'rules') === 'llm' && llmAvailable()
+
   try {
-    const candidates = await extractCandidates(text)
-    await saveCandidates(upload.id, candidates)
-    if (truncated) {
-      await markAnalysisFailed(
-        upload.id,
-        '문서가 길어 앞부분만 분석했습니다. 뒷부분은 나눠서 다시 올려주세요.',
-      )
+    if (useLlm) {
+      const { text, truncated } = clampForLlm(extracted.text)
+      await saveCandidates(upload.id, await extractCandidates(text))
+      if (truncated) {
+        await markAnalysisFailed(
+          upload.id,
+          '문서가 길어 앞부분만 분석했습니다. 뒷부분은 나눠서 다시 올려주세요.',
+        )
+      }
+    } else {
+      // 규칙 분해는 토큰 제한이 없으므로 원문 전체를 넘긴다.
+      const candidates = extractCandidatesByRules(extracted.text)
+      await saveCandidates(upload.id, candidates)
+      if (candidates.length === 0) {
+        await markAnalysisFailed(
+          upload.id,
+          '규칙 분해가 조각을 찾지 못했습니다. 날짜(2019.3 ~ 2022.2)나 숫자가 들어간 줄이 있어야 잡힙니다. ' +
+          '자유서술 문서라면 자산 은행에서 직접 입력하시는 편이 빠릅니다.',
+        )
+      }
     }
   } catch (err) {
     await markAnalysisFailed(
